@@ -1,0 +1,129 @@
+# Fork-local build: Android arm64 (arm64-v8a) release APK for the
+# cloud-sync-ungated build. Mirrors android-e2e.yml / nightly.yml's Android
+# scaffolding, with two fork-specific differences:
+#
+#   - the APK is signed with a keystore generated at build time, because the
+#     official ANDROID_KEY_* secrets are not available in the fork. The keystore
+#     is uploaded as a second artifact so it can be reused for future upgrades
+#     (Android refuses to install an update signed by a different key).
+#   - nothing is published: no R2 upload, no GitHub release, no updater .sig.
+#
+# Lives on its own branch so pushing it does not re-trigger the Windows workflow.
+name: Build Android arm64 APK (fork)
+
+on:
+  push:
+    branches:
+      - build/android-arm64
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: initialize git submodules
+        run: git submodule update --init --recursive
+
+      - name: setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: setup Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: install NDK
+        run: sdkmanager "ndk;28.2.13676358"
+
+      - name: install dependencies
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: copy pdfjs-dist and simplecc-dist to public directory
+        run: pnpm --filter @readest/readest-app setup-vendors
+
+      - name: unit tests for the cloud sync gate
+        working-directory: apps/readest-app
+        run: pnpm test:pr:web:unit src/__tests__/components/settings/cloudSync.test.ts
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: '. -> target'
+          key: fork-android-arm64-cargo
+
+      - name: generate signing keystore
+        run: |
+          keytool -genkeypair \
+            -keystore "$RUNNER_TEMP/fork-release.jks" \
+            -alias readestfork \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass readestfork -keypass readestfork \
+            -dname "CN=Readest Fork Build, OU=Personal, O=Personal, L=NA, ST=NA, C=CN"
+          ls -la "$RUNNER_TEMP/fork-release.jks"
+
+      - name: build release APK (arm64)
+        working-directory: apps/readest-app
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+          NODE_OPTIONS: '--max-old-space-size=8192'
+        run: |
+          set -euo pipefail
+          # Only the customized files of gen/android are tracked — regenerate the
+          # gradle scaffolding, then restore the tracked customizations.
+          rm -rf src-tauri/gen/android
+          pnpm tauri android init
+          pnpm tauri icon ../../data/icons/readest-book.png
+          git checkout .
+
+          # build.gradle.kts loads rootProject/keystore.properties when it exists
+          # and only then applies the "signing" config to the release variant.
+          pushd src-tauri/gen/android
+          {
+            echo "keyAlias=readestfork"
+            echo "password=readestfork"
+            echo "storeFile=$RUNNER_TEMP/fork-release.jks"
+          } > keystore.properties
+          popd
+
+          pnpm tauri android build \
+            --target aarch64 \
+            --config '{"bundle":{"createUpdaterArtifacts":false}}'
+
+          echo '--- produced APKs ---'
+          find src-tauri/gen/android/app/build/outputs/apk -name '*.apk' -exec ls -la {} \;
+
+      - name: upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: readest-android-arm64-apk
+          path: apps/readest-app/src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+
+      - name: upload signing keystore
+        uses: actions/upload-artifact@v4
+        with:
+          name: fork-signing-keystore
+          path: ${{ runner.temp }}/fork-release.jks
+          if-no-files-found: error
