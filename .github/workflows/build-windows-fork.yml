@@ -1,0 +1,91 @@
+# Fork-local build: Windows x64 NSIS installer for the cloud-sync-ungated build.
+#
+# Why this exists: the premium gate for third-party cloud sync (WebDAV / Drive /
+# S3 / OneDrive) lives entirely in the client (src/utils/access.ts), but the
+# frontend ships brotli-compressed inside readest.exe, so the installed official
+# build cannot be patched in place. Rebuilding is the only route, and this
+# machine has no Rust/MSVC toolchain — so the build runs here instead.
+#
+# Differences from the upstream nightly/release workflows, all deliberate:
+#   - no TAURI_SIGNING_PRIVATE_KEY: createUpdaterArtifacts is overridden off, so
+#     no updater .sig is produced. This build is never auto-updated by Readest.
+#   - no Sentry/PostHog/R2/Apple secrets. `pnpm upload-sourcemaps` is a no-op
+#     without SENTRY_AUTH_TOKEN by design (see scripts/upload-sourcemaps.mjs),
+#     and the Supabase config falls back to the tracked defaults in .env.
+#   - artifact is uploaded to Actions storage, not published anywhere.
+name: Build Windows (fork)
+
+on:
+  push:
+    branches:
+      - feat/unlock-cloud-sync
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 150
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: initialize git submodules
+        run: git submodule update --init --recursive
+
+      - name: setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: install dependencies
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: copy pdfjs-dist and simplecc-dist to public directory
+        run: pnpm --filter @readest/readest-app setup-vendors
+
+      # Runs before the (slow) Rust build so a wrong gate fails fast. This is the
+      # suite that asserts the value of CLOUD_SYNC_REQUIRES_PREMIUM.
+      - name: unit tests for the cloud sync gate
+        working-directory: apps/readest-app
+        run: pnpm test:pr:web:unit src/__tests__/components/settings/cloudSync.test.ts
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Cargo workspace root is the repo root, so bundles land in ./target.
+          workspaces: '. -> target'
+          key: fork-windows-x64-cargo
+
+      - name: build NSIS installer
+        working-directory: apps/readest-app
+        shell: bash
+        env:
+          NODE_OPTIONS: '--max-old-space-size=8192'
+        run: |
+          pnpm tauri build \
+            --target x86_64-pc-windows-msvc \
+            --bundles nsis \
+            --config '{"bundle":{"createUpdaterArtifacts":false}}'
+
+      - name: list bundles
+        shell: bash
+        run: ls -la target/x86_64-pc-windows-msvc/release/bundle/nsis/ || true
+
+      - name: upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: readest-windows-x64-nsis
+          path: target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+          if-no-files-found: error
