@@ -2,10 +2,14 @@
 # cloud-sync-ungated build. Mirrors android-e2e.yml / nightly.yml's Android
 # scaffolding, with two fork-specific differences:
 #
-#   - the APK is signed with a keystore generated at build time, because the
-#     official ANDROID_KEY_* secrets are not available in the fork. The keystore
-#     is uploaded as a second artifact so it can be reused for future upgrades
-#     (Android refuses to install an update signed by a different key).
+#   - the APK is signed with the fork's own keystore, held in repo secrets
+#     (ANDROID_KEYSTORE_BASE64 / ANDROID_KEY_ALIAS / ANDROID_KEY_PASSWORD). The
+#     official ANDROID_KEY_* secrets do not exist in a fork, and the key must NOT
+#     be regenerated per run: Android refuses to install an update signed by a
+#     different key, so a throwaway key would force an uninstall — and local data
+#     loss — on every rebuild. The step below fails loudly rather than fall back
+#     to a fresh key, and prints the certificate fingerprint so two builds can be
+#     compared at a glance.
 #   - nothing is published: no R2 upload, no GitHub release, no updater .sig.
 #
 # Lives on its own branch so pushing it does not re-trigger the Windows workflow.
@@ -63,12 +67,11 @@ jobs:
         working-directory: apps/readest-app
         run: pnpm exec tsc --noEmit
 
-      - name: unit tests (cloud sync gate, translator providers)
+      # The whole suite, not a hand-picked file list: a filtered run once reported
+      # success here while another test file was failing.
+      - name: unit tests
         working-directory: apps/readest-app
-        run: |
-          pnpm test:pr:web:unit \
-            src/__tests__/components/settings/cloudSync.test.ts \
-            src/__tests__/services/translators/providers.test.ts
+        run: pnpm test:pr:web:unit
 
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -81,21 +84,37 @@ jobs:
           workspaces: '. -> target'
           key: fork-android-arm64-cargo
 
-      - name: generate signing keystore
+      - name: decode the signing keystore from secrets
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          keytool -genkeypair \
-            -keystore "$RUNNER_TEMP/fork-release.jks" \
-            -alias readestfork \
-            -keyalg RSA -keysize 2048 -validity 10000 \
-            -storepass readestfork -keypass readestfork \
-            -dname "CN=Readest Fork Build, OU=Personal, O=Personal, L=NA, ST=NA, C=CN"
-          ls -la "$RUNNER_TEMP/fork-release.jks"
+          set -euo pipefail
+          if [ -z "${ANDROID_KEYSTORE_BASE64:-}" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 is not set. Refusing to build an"
+            echo "::error::APK signed with a throwaway key, which could never be"
+            echo "::error::upgraded in place. Set ANDROID_KEYSTORE_BASE64 along with"
+            echo "::error::ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD, then re-run."
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/keystore"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/keystore/fork-release.jks"
+
+          # Record the identity of the key that signs this build. Two builds are
+          # upgrade-compatible exactly when these fingerprints match.
+          echo '--- signing certificate ---'
+          keytool -list -v \
+            -keystore "$RUNNER_TEMP/keystore/fork-release.jks" \
+            -storepass "$ANDROID_KEY_PASSWORD" 2>/dev/null \
+            | grep -E 'Alias name|Certificate fingerprint \(SHA256\)' || true
 
       - name: build release APK (arm64)
         working-directory: apps/readest-app
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
           NODE_OPTIONS: '--max-old-space-size=8192'
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
           # Only the customized files of gen/android are tracked — regenerate the
@@ -109,9 +128,9 @@ jobs:
           # and only then applies the "signing" config to the release variant.
           pushd src-tauri/gen/android
           {
-            echo "keyAlias=readestfork"
-            echo "password=readestfork"
-            echo "storeFile=$RUNNER_TEMP/fork-release.jks"
+            echo "keyAlias=$ANDROID_KEY_ALIAS"
+            echo "password=$ANDROID_KEY_PASSWORD"
+            echo "storeFile=$RUNNER_TEMP/keystore/fork-release.jks"
           } > keystore.properties
           popd
 
@@ -122,16 +141,9 @@ jobs:
           echo '--- produced APKs ---'
           find src-tauri/gen/android/app/build/outputs/apk -name '*.apk' -exec ls -la {} \;
 
-      - name: upload APKs
+      - name: upload APK
         uses: actions/upload-artifact@v4
         with:
           name: readest-android-arm64-apk
           path: apps/readest-app/src-tauri/gen/android/app/build/outputs/apk/**/*.apk
-          if-no-files-found: error
-
-      - name: upload signing keystore
-        uses: actions/upload-artifact@v4
-        with:
-          name: fork-signing-keystore
-          path: ${{ runner.temp }}/fork-release.jks
           if-no-files-found: error
