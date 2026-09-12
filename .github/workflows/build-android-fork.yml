@@ -58,9 +58,17 @@ jobs:
       - name: copy pdfjs-dist and simplecc-dist to public directory
         run: pnpm --filter @readest/readest-app setup-vendors
 
-      - name: unit tests for the cloud sync gate
+      # Run before the (slow) Rust build so a bad edit fails fast.
+      - name: type check
         working-directory: apps/readest-app
-        run: pnpm test:pr:web:unit src/__tests__/components/settings/cloudSync.test.ts
+        run: pnpm exec tsc --noEmit
+
+      - name: unit tests (cloud sync gate, translator providers)
+        working-directory: apps/readest-app
+        run: |
+          pnpm test:pr:web:unit \
+            src/__tests__/components/settings/cloudSync.test.ts \
+            src/__tests__/services/translators/providers.test.ts
 
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable

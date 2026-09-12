@@ -771,13 +771,49 @@ describe('deeplProvider', () => {
     vi.restoreAllMocks();
   });
 
+  // The fork points this provider at a self-hosted DeepLX-Pro instance, whose
+  // envelope is `{ code, data }` rather than the hosted proxy's
+  // `{ translations: [...] }`.
   const ok = (text: string) => ({
     ok: true,
     status: 200,
-    json: async () => ({ translations: [{ text }] }),
+    json: async () => ({ code: 200, data: text }),
   });
 
   const sentBody = () => JSON.parse(String(mockFetch.mock.calls[0]![1].body));
+
+  it('posts one request per line to the self-hosted endpoint, skipping blanks', async () => {
+    mockFetch.mockImplementation(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      return { ok: true, status: 200, json: async () => ({ code: 200, data: `zh:${body.text}` }) };
+    });
+
+    const { deeplProvider } = await import('@/services/translators/providers/deepl');
+    const out = await deeplProvider.translate(['one', '   ', 'two'], 'en', 'zh-CN');
+
+    expect(out).toEqual(['zh:one', '   ', 'zh:two']);
+    // DeepLX-Pro takes a single string per request and answers 400 for a blank
+    // one, so the blank line must never reach the network.
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(String(mockFetch.mock.calls[0]![0])).toBe(
+      'https://translate.126413.xyz:4433/translate',
+    );
+    expect(mockFetch.mock.calls[0]![1].headers['X-API-Key']).toBe('gFKJA0npY29Nfq');
+    expect(mockFetch.mock.calls[0]![1].headers['Authorization']).toBeUndefined();
+  });
+
+  it('surfaces the error message from the endpoint', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 400,
+      json: async () => ({ code: 400, message: 'target_lang: unsupported target language: zh-TW' }),
+    });
+
+    const { deeplProvider } = await import('@/services/translators/providers/deepl');
+    await expect(deeplProvider.translate(['hello'], 'en', 'zh-CN')).rejects.toThrow(
+      'unsupported target language',
+    );
+  });
 
   it('sends the script subtag in canonical case, not upper-cased', async () => {
     // The service 500s on `ZH-HANT` and on `ZH-TW`, but answers 200 with real
