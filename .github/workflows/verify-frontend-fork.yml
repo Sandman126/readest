@@ -1,0 +1,84 @@
+# Cheap, Rust-free verification that the fork's translation patch survives the
+# frontend build.
+#
+# Why this workflow exists: readest embeds its frontend brotli-compressed inside
+# the shipped binary (desktop readest.exe and Android's libreadestlib.so alike),
+# so the packaged artifact cannot be grepped for the patch — the APK contains no
+# .js entries at all. The last greppable stage is the Next.js export under
+# apps/readest-app/out, which is what this job asserts against.
+#
+# Lives on its own branch so pushing it does not trigger the NSIS/APK builds.
+name: Verify built frontend (fork patch)
+
+on:
+  push:
+    branches:
+      - verify/frontend-bundle
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: initialize git submodules
+        run: git submodule update --init --recursive
+
+      - name: setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: install dependencies
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: copy pdfjs-dist and simplecc-dist to public directory
+        run: pnpm --filter @readest/readest-app setup-vendors
+
+      - name: build the frontend export
+        working-directory: apps/readest-app
+        run: pnpm build
+
+      - name: assert the patch is in the built bundle
+        working-directory: apps/readest-app
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo '--- files containing the self-hosted endpoint ---'
+          grep -rl 'translate.126413.xyz' out/_next/static/ || {
+            echo '::error::the translation endpoint is missing from the built frontend'
+            exit 1
+          }
+
+          echo '--- files containing the API key ---'
+          grep -rl 'gFKJA0npY29Nfq' out/_next/static/ || {
+            echo '::error::the API key is missing from the built frontend'
+            exit 1
+          }
+
+          echo '--- the hosted proxy should no longer be the endpoint ---'
+          if grep -rl 'deepl/translate' out/_next/static/ >/dev/null 2>&1; then
+            echo '::warning::something still references deepl/translate'
+            grep -rl 'deepl/translate' out/_next/static/ || true
+          else
+            echo 'clean: no deepl/translate reference in the built frontend'
+          fi
+
+          echo '--- evidence: the surrounding minified code ---'
+          F=$(grep -rl 'translate.126413.xyz' out/_next/static/ | head -n 1)
+          echo "chunk: $F"
+          grep -o '.\{0,90\}translate\.126413\.xyz.\{0,110\}' "$F" | head -n 2
+
+          echo '--- evidence: language-code helper survived minification ---'
+          grep -o '.\{0,40\}ZH-Hant.\{0,40\}' "$F" | head -n 2 || true
