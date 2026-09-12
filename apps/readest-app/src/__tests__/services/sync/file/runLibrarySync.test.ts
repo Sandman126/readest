@@ -320,9 +320,11 @@ describe('getReadyFileSyncBackends', () => {
     expect(getReadyFileSyncBackends(settings)).toEqual(['webdav', 'gdrive']);
   });
 
-  test('excludes everything when the plan gate pauses third-party sync', () => {
+  test('keeps running on the free plan (fork: the plan gate is off)', () => {
+    // CLOUD_SYNC_REQUIRES_PREMIUM is false on this fork, so resolveCloudSyncGate
+    // never reports `paused` and a free plan keeps its enabled backends.
     setCachedUserPlan('free');
-    expect(getReadyFileSyncBackends(settings)).toEqual([]);
+    expect(getReadyFileSyncBackends(settings)).toEqual(['webdav', 'gdrive']);
   });
 
   test('rules icloud out off Apple platforms (canBackendRun false)', () => {
