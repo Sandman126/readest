@@ -56,12 +56,14 @@ jobs:
         working-directory: apps/readest-app
         run: pnpm exec tsc --noEmit
 
-      - name: unit tests (cloud sync gate, translator providers)
+      # Runs the WHOLE suite, not a hand-picked file list: a filtered run
+      # previously reported success here while runLibrarySync.test.ts was
+      # failing. One line on purpose — `\` continuations are bash-only, and
+      # windows-latest defaults to pwsh, which swallowed the file arguments and
+      # ran everything anyway.
+      - name: unit tests
         working-directory: apps/readest-app
-        run: |
-          pnpm test:pr:web:unit \
-            src/__tests__/components/settings/cloudSync.test.ts \
-            src/__tests__/services/translators/providers.test.ts
+        run: pnpm test:pr:web:unit
 
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
