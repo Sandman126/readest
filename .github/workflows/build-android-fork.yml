@@ -101,12 +101,14 @@ jobs:
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/keystore/fork-release.jks"
 
           # Record the identity of the key that signs this build. Two builds are
-          # upgrade-compatible exactly when these fingerprints match.
-          echo '--- signing certificate ---'
+          # upgrade-compatible exactly when these fingerprints match. JDK 17's
+          # keytool prints a bare `SHA256:` line, not
+          # `Certificate fingerprint (SHA256):`.
+          echo '--- keystore certificate ---'
           keytool -list -v \
             -keystore "$RUNNER_TEMP/keystore/fork-release.jks" \
             -storepass "$ANDROID_KEY_PASSWORD" 2>/dev/null \
-            | grep -E 'Alias name|Certificate fingerprint \(SHA256\)' || true
+            | grep -E 'Alias name|SHA256:' || true
 
       - name: build release APK (arm64)
         working-directory: apps/readest-app
@@ -147,3 +149,31 @@ jobs:
           name: readest-android-arm64-apk
           path: apps/readest-app/src-tauri/gen/android/app/build/outputs/apk/**/*.apk
           if-no-files-found: error
+
+      # Assert the APK itself is signed by the fork's fixed key. Checking the
+      # keystore is not enough — only the built APK proves what the signing step
+      # actually applied. A mismatch here means the artifact could not be
+      # installed as an upgrade, which is worth failing on now rather than at
+      # install time on a device that already has the previous build.
+      - name: verify the APK signing certificate
+        env:
+          # SHA-256 of the fork certificate's DER encoding. Public information.
+          EXPECTED_CERT_SHA256: 417b1cb8c1764baf47be500dfd91e1c281420ac2532030978bb1d8e7120afef9
+        run: |
+          set -euo pipefail
+          APK=$(find apps/readest-app/src-tauri/gen/android/app/build/outputs/apk -name '*.apk' | head -n 1)
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort | tail -n 1)
+          echo "apksigner: $APKSIGNER"
+          "$APKSIGNER" verify --print-certs "$APK" | grep -Ei 'certificate (SHA-256|SHA-1) digest' || true
+
+          actual=$("$APKSIGNER" verify --print-certs "$APK" \
+            | grep -i 'certificate SHA-256 digest' | head -n 1 \
+            | awk '{print $NF}' | tr -d ':' | tr 'A-Z' 'a-z')
+          echo "actual   : $actual"
+          echo "expected : $EXPECTED_CERT_SHA256"
+          if [ "$actual" != "$EXPECTED_CERT_SHA256" ]; then
+            echo "::error::the APK is signed by an unexpected key; it would not"
+            echo "::error::install as an upgrade over an existing install."
+            exit 1
+          fi
+          echo 'signing key matches the fork keystore'
