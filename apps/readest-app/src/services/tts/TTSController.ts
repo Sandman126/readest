@@ -19,9 +19,10 @@ import { WebSpeechClient } from './WebSpeechClient';
 import { NativeTTSClient } from './NativeTTSClient';
 import { EdgeTTSClient } from './EdgeTTSClient';
 import { BaiduTTSClient } from './BaiduTTSClient';
-// Lives in BufferedTTSClient so that module needs no runtime import of this one;
-// re-exported here because callers have always read it from this module.
-import { DEFAULT_PARAGRAPH_GAP_SEC } from './BufferedTTSClient';
+// Lives in the dependency-free gap module so neither this controller nor
+// BufferedTTSClient has to import the other for it; re-exported here because
+// callers have always read it from this module.
+import { DEFAULT_PARAGRAPH_GAP_SEC } from './gap';
 export { DEFAULT_PARAGRAPH_GAP_SEC };
 import { SectionTimeline, TimelineSentence } from './SectionTimeline';
 import { hydrateProvisionalDurations } from './ttsDuration';

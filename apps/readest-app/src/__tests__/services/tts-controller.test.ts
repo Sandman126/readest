@@ -23,6 +23,15 @@ vi.mock('@/services/tts/EdgeTTSClient', () => ({
   }),
 }));
 
+// Mocked for the same reason as the others: the real class pulls in the cache
+// store (and through it constants.ts, which reads a named export off the mocked
+// EdgeTTSClient).
+vi.mock('@/services/tts/BaiduTTSClient', () => ({
+  BaiduTTSClient: vi.fn().mockImplementation(function (this: Record<string, unknown>) {
+    Object.assign(this, createMockTTSClient('baidu'));
+  }),
+}));
+
 vi.mock('@/services/tts/NativeTTSClient', () => ({
   NativeTTSClient: vi.fn().mockImplementation(function (this: Record<string, unknown>) {
     Object.assign(this, createMockTTSClient('native'));
