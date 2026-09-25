@@ -5,7 +5,9 @@ import { BookTTSCacheStore, getTTSCacheConfig } from './providers/bookCacheStore
 import { CachingProvider } from './providers/cache';
 import { SpeechProvider } from './providers/types';
 import { TTSCapabilities } from './TTSClient';
-import { TTSController } from './TTSController';
+// Type-only: a runtime import would close a cycle back through this class while
+// BufferedTTSClient is still initializing (see the note in BufferedTTSClient).
+import type { TTSController } from './TTSController';
 
 // Everything engine-independent (scheduler, playout, preload, gap policy) lives
 // in BufferedTTSClient; this subclass only wires the Baidu provider — plus the
