@@ -7,7 +7,10 @@ import { TTSWordBoundary } from '@/libs/edgeTTS';
 import { TTSGranularity, TTSMark, TTSVoice, TTSVoicesGroup } from './types';
 import { AppService } from '@/types/system';
 import { parseSSMLMarks } from '@/utils/ssml';
-import { DEFAULT_PARAGRAPH_GAP_SEC, TTSController } from './TTSController';
+// Type-only: importing TTSController at runtime would close a cycle
+// (TTSController imports every TTSClient subclass, which subclasses this module)
+// and evaluate those subclasses while this base class is still uninitialized.
+import type { TTSController } from './TTSController';
 import { TTSUtils } from './TTSUtils';
 import { findBoundaryIndexAtTime } from './wordHighlight';
 import { applyEdgeFade, findSpeechBounds } from './pcm';
@@ -46,6 +49,16 @@ import { TTSAudioBuffer, WebAudioPlayer, WebAudioPlayerEvent } from './WebAudioP
 // cuts the trailing silence, so its audible gap also carries the next
 // utterance's ~0.18s of leading silence.
 export const DEFAULT_SENTENCE_GAP_SEC = 0.15;
+
+// Silence inserted between paragraphs when auto-advancing during continuous
+// playback. Unlike the Edge-only inter-sentence gap above, this applies to every
+// TTS client: the paragraph-to-paragraph transition (stop -> next -> speak) is
+// engine-agnostic. There is no natural pause there otherwise — the transition is
+// as fast as the async stop/init overhead allows, which reads as no pause at all.
+// Defined beside its sibling rather than in TTSController so this module needs no
+// runtime import of the controller; TTSController re-exports it for the callers
+// that have always read it from there.
+export const DEFAULT_PARAGRAPH_GAP_SEC = 0.3;
 const TICKS_PER_SECOND = 10_000_000;
 
 // How many consecutive unreachable sentences (offline with nothing cached, or

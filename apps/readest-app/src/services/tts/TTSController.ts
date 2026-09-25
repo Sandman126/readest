@@ -19,6 +19,10 @@ import { WebSpeechClient } from './WebSpeechClient';
 import { NativeTTSClient } from './NativeTTSClient';
 import { EdgeTTSClient } from './EdgeTTSClient';
 import { BaiduTTSClient } from './BaiduTTSClient';
+// Lives in BufferedTTSClient so that module needs no runtime import of this one;
+// re-exported here because callers have always read it from this module.
+import { DEFAULT_PARAGRAPH_GAP_SEC } from './BufferedTTSClient';
+export { DEFAULT_PARAGRAPH_GAP_SEC };
 import { SectionTimeline, TimelineSentence } from './SectionTimeline';
 import { hydrateProvisionalDurations } from './ttsDuration';
 import { DownloadableSentence, SectionEnumerator, TTSDownloader } from './TTSDownloader';
@@ -107,7 +111,8 @@ export interface TTSViewBindings {
 // is engine-agnostic, handled entirely in #speak()/forward() below. There is
 // no natural pause here otherwise -- the transition is as fast as the async
 // stop/init overhead allows, which reads as no pause at all.
-export const DEFAULT_PARAGRAPH_GAP_SEC = 0.3;
+// The value itself lives in BufferedTTSClient (see the note there); this module
+// imports and re-exports it so existing callers keep working.
 
 export class TTSController extends EventTarget {
   // PlaybackSource tag: the media bridge and the session manager consume this
