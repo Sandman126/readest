@@ -57,6 +57,14 @@ vi.mock('@/services/tts/EdgeTTSClient', () => ({
     Object.assign(this, makeMockClient('edge-tts', true));
   }),
 }));
+// TTSController constructs this client too, so it must be mocked like the rest:
+// the real class's getVoices() calls TTSUtils.sortVoicesPreferLocaleFunc, which
+// the TTSUtils mock below does not provide.
+vi.mock('@/services/tts/BaiduTTSClient', () => ({
+  BaiduTTSClient: vi.fn().mockImplementation(function (this: Record<string, unknown>) {
+    Object.assign(this, makeMockClient('baidu-tts', false));
+  }),
+}));
 vi.mock('@/services/tts/NativeTTSClient', () => ({
   NativeTTSClient: vi.fn().mockImplementation(function (this: Record<string, unknown>) {
     Object.assign(this, makeMockClient('native-tts', false));

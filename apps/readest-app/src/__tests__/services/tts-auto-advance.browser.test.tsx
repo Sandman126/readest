@@ -101,6 +101,13 @@ vi.mock('@/services/tts/NativeTTSClient', () => ({
     Object.assign(this, makeMockTTSClient('native'));
   }),
 }));
+// TTSController constructs this client unconditionally as well; leaving it real
+// would construct a live provider (and its cache store) inside the test.
+vi.mock('@/services/tts/BaiduTTSClient', () => ({
+  BaiduTTSClient: vi.fn().mockImplementation(function (this: Record<string, unknown>) {
+    Object.assign(this, makeMockTTSClient('baidu'));
+  }),
+}));
 
 // useEnv/useAuth throw outside their providers; stub them (test-side module
 // mocks, not a production seam). A null appService exercises the web/desktop
