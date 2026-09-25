@@ -18,6 +18,7 @@ import { expandRangeOverRuby } from '@/utils/ruby';
 import { WebSpeechClient } from './WebSpeechClient';
 import { NativeTTSClient } from './NativeTTSClient';
 import { EdgeTTSClient } from './EdgeTTSClient';
+import { BaiduTTSClient } from './BaiduTTSClient';
 import { SectionTimeline, TimelineSentence } from './SectionTimeline';
 import { hydrateProvisionalDurations } from './ttsDuration';
 import { DownloadableSentence, SectionEnumerator, TTSDownloader } from './TTSDownloader';
@@ -194,10 +195,12 @@ export class TTSController extends EventTarget {
   ttsClient: TTSClient;
   ttsWebClient: TTSClient;
   ttsEdgeClient: EdgeTTSClient;
+  ttsBaiduClient: BaiduTTSClient;
   ttsNativeClient: TTSClient | null = null;
   ttsMediaOverlayClient: MediaOverlayClient;
   ttsWebVoices: TTSVoice[] = [];
   ttsEdgeVoices: TTSVoice[] = [];
+  ttsBaiduVoices: TTSVoice[] = [];
   ttsNativeVoices: TTSVoice[] = [];
   ttsTargetLang: string = '';
 
@@ -213,6 +216,7 @@ export class TTSController extends EventTarget {
     super();
     this.ttsWebClient = new WebSpeechClient(this);
     this.ttsEdgeClient = new EdgeTTSClient(this, appService);
+    this.ttsBaiduClient = new BaiduTTSClient(this, appService);
     // Native TTS is backed by Android TextToSpeech and iOS AVSpeechSynthesizer.
     // TODO: implement native TTS client for desktop platforms.
     if (appService?.isAndroidApp || appService?.isIOSApp) {
@@ -407,6 +411,14 @@ export class TTSController extends EventTarget {
     if (await this.ttsWebClient.init()) {
       availableClients.push(this.ttsWebClient);
     }
+    // Appended last on purpose: `availableClients[0]` is the automatic default,
+    // and this engine is Chinese-only, so it must never be picked for a book in
+    // another language. It is still reachable by choosing one of its voices
+    // (setVoice selects the engine by voice ownership) and by the remembered
+    // preferred client.
+    if (await this.ttsBaiduClient.init()) {
+      availableClients.push(this.ttsBaiduClient);
+    }
     this.ttsClient = availableClients[0] || this.ttsWebClient;
     const preferredClientName = TTSUtils.getPreferredClient();
     if (preferredClientName) {
@@ -419,6 +431,7 @@ export class TTSController extends EventTarget {
     }
     this.ttsWebVoices = await this.ttsWebClient.getAllVoices();
     this.ttsEdgeVoices = await this.ttsEdgeClient.getAllVoices();
+    this.ttsBaiduVoices = await this.ttsBaiduClient.getAllVoices();
 
     // A book that ships its own narration should be read by its narrator, not
     // synthesized — that is the whole point of having the recording. The
@@ -1784,6 +1797,7 @@ export class TTSController extends EventTarget {
 
   async setPrimaryLang(lang: string) {
     if (this.ttsEdgeClient.initialized) this.ttsEdgeClient.setPrimaryLang(lang);
+    if (this.ttsBaiduClient.initialized) this.ttsBaiduClient.setPrimaryLang(lang);
     if (this.ttsWebClient.initialized) this.ttsWebClient.setPrimaryLang(lang);
     if (this.ttsNativeClient?.initialized) this.ttsNativeClient?.setPrimaryLang(lang);
     if (this.ttsMediaOverlayClient.initialized) this.ttsMediaOverlayClient.setPrimaryLang(lang);
@@ -1801,6 +1815,7 @@ export class TTSController extends EventTarget {
   async getVoices(lang: string) {
     const ttsWebVoices = await this.ttsWebClient.getVoices(lang);
     const ttsEdgeVoices = await this.ttsEdgeClient.getVoices(lang);
+    const ttsBaiduVoices = await this.ttsBaiduClient.getVoices(lang);
     const ttsNativeVoices = (await this.ttsNativeClient?.getVoices(lang)) ?? [];
     // The book's own narrator leads the list when there is one: it is the best
     // voice available for that book by a wide margin.
@@ -1812,6 +1827,7 @@ export class TTSController extends EventTarget {
       ...narrationVoices,
       ...ttsNativeVoices,
       ...ttsEdgeVoices,
+      ...ttsBaiduVoices,
       ...ttsWebVoices,
     ];
     return voicesGroups;
@@ -1846,6 +1862,11 @@ export class TTSController extends EventTarget {
     const useNativeTTS = !!this.ttsNativeVoices.find(
       (voice) => (voiceId === '' || voice.id === voiceId) && !voice.disabled,
     );
+    // Checked after Edge/native so an empty voiceId still resolves to a
+    // general-purpose engine rather than this Chinese-only one.
+    const useBaiduTTS = !!this.ttsBaiduVoices.find(
+      (voice) => (voiceId === '' || voice.id === voiceId) && !voice.disabled,
+    );
     if (useEdgeTTS) {
       this.ttsClient = this.ttsEdgeClient;
       await this.ttsClient.setRate(this.ttsRate);
@@ -1854,6 +1875,9 @@ export class TTSController extends EventTarget {
         throw new Error('Native TTS client is not available');
       }
       this.ttsClient = this.ttsNativeClient;
+      await this.ttsClient.setRate(this.ttsRate);
+    } else if (useBaiduTTS) {
+      this.ttsClient = this.ttsBaiduClient;
       await this.ttsClient.setRate(this.ttsRate);
     } else {
       this.ttsClient = this.ttsWebClient;
@@ -2188,6 +2212,9 @@ export class TTSController extends EventTarget {
     }
     if (this.ttsEdgeClient.initialized) {
       await this.ttsEdgeClient.shutdown();
+    }
+    if (this.ttsBaiduClient.initialized) {
+      await this.ttsBaiduClient.shutdown();
     }
     if (this.ttsNativeClient?.initialized) {
       await this.ttsNativeClient.shutdown();
