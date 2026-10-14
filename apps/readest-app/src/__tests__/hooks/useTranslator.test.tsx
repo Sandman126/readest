@@ -119,17 +119,20 @@ describe('custom translators in the registry and useTranslator', () => {
     expect(isTranslatorAvailable(builtIn, true, false)).toBe(true);
   });
 
-  it('falls back to a built-in translator for a free user who picked a custom one', async () => {
+  // Fork-local: the custom translator gate is off, so a custom provider stays
+  // selectable without a plan. It carries no `authRequired`, so signing out does
+  // not fall back either.
+  it('keeps a custom translator for a free user', async () => {
     auth.token = sessionToken({ plan: 'free' });
     const { result } = renderHook(() => useTranslator({ provider: 'custom:llm' }));
     await waitFor(() => expect(result.current.translator).toBeDefined());
-    expect(result.current.translator!.name.startsWith('custom:')).toBe(false);
+    expect(result.current.translator!.name.startsWith('custom:')).toBe(true);
   });
 
-  it('falls back to a built-in translator when signed out', async () => {
+  it('keeps a custom translator when signed out', async () => {
     auth.token = null;
     const { result } = renderHook(() => useTranslator({ provider: 'custom:llm' }));
     await waitFor(() => expect(result.current.translator).toBeDefined());
-    expect(result.current.translator!.name.startsWith('custom:')).toBe(false);
+    expect(result.current.translator!.name.startsWith('custom:')).toBe(true);
   });
 });

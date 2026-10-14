@@ -76,9 +76,8 @@ describe('self-hosted deployments', () => {
   });
 });
 
-// Custom translators (the user's own LLM endpoint or DeepL key) are premium.
-// The reader decides from the session token alone, so a signed-out reader is
-// locked unless the deployment is self-hosted.
+// Fork-local: the custom translator gate is off, so the reader can set one up
+// regardless of plan or sign-in state.
 describe('isCustomTranslatorAllowed', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -88,23 +87,14 @@ describe('isCustomTranslatorAllowed', () => {
     expect(isCustomTranslatorAllowed(mockToken({ plan: 'plus' }))).toBe(true);
   });
 
-  it('allows a free user who bought Full Customization', () => {
-    expect(isCustomTranslatorAllowed(mockToken({ customization_purchased: true }))).toBe(true);
-  });
-
-  it('denies a free user and a storage-only buyer', () => {
-    expect(isCustomTranslatorAllowed(mockToken({ plan: 'free' }))).toBe(false);
+  it('allows a free user and a storage-only buyer', () => {
+    expect(isCustomTranslatorAllowed(mockToken({ plan: 'free' }))).toBe(true);
     expect(
       isCustomTranslatorAllowed(mockToken({ plan: 'free', storage_purchased_bytes: 1e9 })),
-    ).toBe(false);
+    ).toBe(true);
   });
 
-  it('denies a signed-out reader', () => {
-    expect(isCustomTranslatorAllowed(null)).toBe(false);
-  });
-
-  it('allows a signed-out reader on a self-hosted deployment', () => {
-    vi.stubEnv('NEXT_PUBLIC_SELF_HOSTED', 'true');
+  it('allows a signed-out reader', () => {
     expect(isCustomTranslatorAllowed(null)).toBe(true);
   });
 });
