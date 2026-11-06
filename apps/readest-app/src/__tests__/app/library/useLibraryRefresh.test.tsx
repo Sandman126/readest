@@ -86,15 +86,17 @@ for (const [stage, fullRefresh] of [false, true].entries()) {
       expect(h.pull).toHaveBeenCalledWith(fullRefresh, true);
     });
 
-    it('prompts for sign-in when the only file backend is paused by the plan gate', async () => {
+    it('keeps a third-party backend on the free plan (fork: the plan gate is off)', async () => {
+      // CLOUD_SYNC_REQUIRES_PREMIUM is false on this fork, so resolveCloudSyncGate
+      // never pauses a configured file backend and no sign-in is prompted.
       setCachedUserPlan('free');
       const settings = useSettingsStore.getState().settings;
       useSettingsStore.setState({
         settings: { ...settings, webdav: { ...settings.webdav, enabled: true } },
       });
       await refresh();
-      expect(h.login).toHaveBeenCalledWith(h.router);
-      expect(h.pull).not.toHaveBeenCalled();
+      expect(h.login).not.toHaveBeenCalled();
+      expect(h.pull).toHaveBeenCalledWith(fullRefresh, true);
     });
 
     it('refreshes OPDS even when a configured file backend is paused', async () => {

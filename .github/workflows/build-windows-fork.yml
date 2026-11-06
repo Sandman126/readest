@@ -25,7 +25,54 @@ permissions:
   contents: read
 
 jobs:
+  # The jsdom suite is verified on Linux, exactly like upstream's own PR checks
+  # (test_web_app in pull-request.yml, two shards). A Windows checkout fails four
+  # of these tests for reasons unrelated to this fork — an iOS activation-rule
+  # test matches `>-\n` against a CRLF file, and the patched Open Graph renderer
+  # and a paragraph-gap timing test need the Linux environment. Fail here in a
+  # few minutes instead of after the Rust build.
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: initialize git submodules
+        run: git submodule update --init --recursive
+
+      - name: setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: install dependencies
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: copy pdfjs-dist and simplecc-dist to public directory
+        run: pnpm --filter @readest/readest-app setup-vendors
+
+      - name: type check
+        if: matrix.shard == 1
+        working-directory: apps/readest-app
+        run: pnpm exec tsc --noEmit
+
+      # The whole suite, not a hand-picked file list: a filtered run previously
+      # reported success while runLibrarySync.test.ts was failing.
+      - name: unit tests (shard ${{ matrix.shard }}/2)
+        working-directory: apps/readest-app
+        run: pnpm test:pr:web:unit --shard=${{ matrix.shard }}/2
+
   build:
+    needs: checks
     runs-on: windows-latest
     timeout-minutes: 150
     steps:
@@ -49,21 +96,6 @@ jobs:
 
       - name: copy pdfjs-dist and simplecc-dist to public directory
         run: pnpm --filter @readest/readest-app setup-vendors
-
-      # Run before the (slow) Rust build so a bad edit fails in ~5 minutes rather
-      # than after a full compile.
-      - name: type check
-        working-directory: apps/readest-app
-        run: pnpm exec tsc --noEmit
-
-      # Runs the WHOLE suite, not a hand-picked file list: a filtered run
-      # previously reported success here while runLibrarySync.test.ts was
-      # failing. One line on purpose — `\` continuations are bash-only, and
-      # windows-latest defaults to pwsh, which swallowed the file arguments and
-      # ran everything anyway.
-      - name: unit tests
-        working-directory: apps/readest-app
-        run: pnpm test:pr:web:unit
 
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
