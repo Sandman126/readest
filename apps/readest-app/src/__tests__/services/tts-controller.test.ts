@@ -32,6 +32,20 @@ vi.mock('@/services/tts/NativeTTSClient', () => ({
   }),
 }));
 
+// The fork-local Baidu engine is constructed unconditionally. Stub its provider
+// inert so the client never initializes: it then stays out of the client list,
+// the voice groups and the TTSUtils mock (which lacks the sorting helper the
+// real client's getVoices would call).
+vi.mock('@/services/tts/providers/baidu', () => ({
+  BaiduSpeechProvider: vi.fn().mockImplementation(function (this: Record<string, unknown>) {
+    Object.assign(this, {
+      id: 'baidu-tts',
+      init: vi.fn().mockResolvedValue(false),
+      getAllVoices: vi.fn().mockResolvedValue([]),
+    });
+  }),
+}));
+
 // Track the inaudible background keep-alive (WebAudio) toggled for direct-speak
 // engines. Arrow closures so the vi.mock hoist never hits a TDZ on these consts.
 const startKeepAlive = vi.fn();

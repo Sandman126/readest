@@ -26,6 +26,7 @@ import { createBookTTSCacheStore } from './providers/bookCacheStore';
 import { CachingProvider } from './providers/cache';
 import { ReadestVoiceProvider } from './providers/readest';
 import { OpenAICompatibleSpeechProvider } from './providers/openaiCompatible';
+import { BaiduSpeechProvider } from './providers/baidu';
 import type { CustomTTSService } from '@/types/customTTS';
 import { getAccessToken, isCustomTTSAllowed } from '@/utils/access';
 import { SectionTimeline, TimelineSentence } from './SectionTimeline';
@@ -287,12 +288,16 @@ export class TTSController extends EventTarget {
   // Supplied by the reader (setCustomTTSServices) so the controller stays free
   // of store imports.
   #customTTSServices: () => CustomTTSService[] = () => [];
+  // Baidu speech (fork-local): Chinese-only, so like Readest Voice it is never
+  // the default engine — only chosen by picking one of its voices.
+  ttsBaiduClient: BufferedTTSClient;
   ttsNativeClient: TTSClient | null = null;
   ttsMediaOverlayClient: MediaOverlayClient;
   ttsWebVoices: TTSVoice[] = [];
   ttsEdgeVoices: TTSVoice[] = [];
   ttsReadestVoices: TTSVoice[] = [];
   ttsCustomVoices: TTSVoice[] = [];
+  ttsBaiduVoices: TTSVoice[] = [];
   ttsNativeVoices: TTSVoice[] = [];
   ttsTargetLang: string = '';
   // The clients whose init succeeded, in priority order.
@@ -329,6 +334,13 @@ export class TTSController extends EventTarget {
     );
     this.ttsCustomClient = new BufferedTTSClient(
       cacheStore ? new CachingProvider(customProvider, cacheStore) : customProvider,
+      this,
+      appService,
+    );
+    // Fork-local Baidu engine, built the same way as the two above.
+    const baiduProvider = new BaiduSpeechProvider();
+    this.ttsBaiduClient = new BufferedTTSClient(
+      cacheStore ? new CachingProvider(baiduProvider, cacheStore) : baiduProvider,
       this,
       appService,
     );
@@ -522,6 +534,7 @@ export class TTSController extends EventTarget {
     // Results are still taken in priority order.
     const readestReady = withinEngineTimeout(this.ttsReadestClient.init(), false);
     const customReady = withinEngineTimeout(this.ttsCustomClient.init(), false);
+    const baiduReady = withinEngineTimeout(this.ttsBaiduClient.init(), false);
     const edgeReady = withinEngineTimeout(this.ttsEdgeClient.init(), false);
     const nativeReady = this.ttsNativeClient
       ? withinEngineTimeout(this.ttsNativeClient.init(), false)
@@ -546,6 +559,14 @@ export class TTSController extends EventTarget {
     if (customOk) {
       availableClients.push(this.ttsCustomClient);
     }
+    // Appended after the general-purpose engines for the same reason as Readest
+    // Voice: this engine is Chinese-only, so it must never become the automatic
+    // default for a book in another language. It stays reachable by picking one
+    // of its voices, and by the remembered preferred client.
+    const baiduOk = await baiduReady;
+    if (baiduOk) {
+      availableClients.push(this.ttsBaiduClient);
+    }
     this.ttsClient = availableClients[0] || this.ttsWebClient;
     const preferredClientName = TTSUtils.getPreferredClient();
     if (preferredClientName) {
@@ -557,13 +578,19 @@ export class TTSController extends EventTarget {
       }
     }
     // An engine whose init failed or timed out has no voices to list.
-    [this.ttsWebVoices, this.ttsEdgeVoices, this.ttsReadestVoices, this.ttsCustomVoices] =
-      await Promise.all([
-        withinEngineTimeout(this.ttsWebClient.getAllVoices(), []),
-        withinEngineTimeout(this.ttsEdgeClient.getAllVoices(), []),
-        readestOk ? withinEngineTimeout(this.ttsReadestClient.getAllVoices(), []) : [],
-        customOk ? this.ttsCustomClient.getAllVoices() : [],
-      ]);
+    [
+      this.ttsWebVoices,
+      this.ttsEdgeVoices,
+      this.ttsReadestVoices,
+      this.ttsCustomVoices,
+      this.ttsBaiduVoices,
+    ] = await Promise.all([
+      withinEngineTimeout(this.ttsWebClient.getAllVoices(), []),
+      withinEngineTimeout(this.ttsEdgeClient.getAllVoices(), []),
+      readestOk ? withinEngineTimeout(this.ttsReadestClient.getAllVoices(), []) : [],
+      customOk ? this.ttsCustomClient.getAllVoices() : [],
+      baiduOk ? this.ttsBaiduClient.getAllVoices() : [],
+    ]);
 
     // A book that ships its own narration should be read by its narrator, not
     // synthesized — that is the whole point of having the recording. The
@@ -2335,6 +2362,7 @@ export class TTSController extends EventTarget {
     if (this.ttsEdgeClient.initialized) this.ttsEdgeClient.setPrimaryLang(lang);
     if (this.ttsReadestClient.initialized) this.ttsReadestClient.setPrimaryLang(lang);
     if (this.ttsCustomClient.initialized) this.ttsCustomClient.setPrimaryLang(lang);
+    if (this.ttsBaiduClient.initialized) this.ttsBaiduClient.setPrimaryLang(lang);
     if (this.ttsWebClient.initialized) this.ttsWebClient.setPrimaryLang(lang);
     if (this.ttsNativeClient?.initialized) this.ttsNativeClient?.setPrimaryLang(lang);
     if (this.ttsMediaOverlayClient.initialized) this.ttsMediaOverlayClient.setPrimaryLang(lang);
@@ -2373,11 +2401,16 @@ export class TTSController extends EventTarget {
     const ttsCustomVoices = this.ttsCustomClient.initialized
       ? (await this.ttsCustomClient.getVoices(lang)).filter((group) => group.voices.length > 0)
       : [];
+    // Fork-local Baidu engine: hidden when unavailable, like the custom one.
+    const ttsBaiduVoices = this.ttsBaiduClient.initialized
+      ? (await this.ttsBaiduClient.getVoices(lang)).filter((group) => group.voices.length > 0)
+      : [];
 
     const voicesGroups = [
       ...narrationVoices,
       ...ttsCustomVoices,
       ...ttsReadestVoices,
+      ...ttsBaiduVoices,
       ...ttsEdgeVoices,
       ...ttsNativeVoices,
       ...ttsWebVoices,
@@ -2420,6 +2453,12 @@ export class TTSController extends EventTarget {
       voiceId !== '' &&
       this.ttsReadestClient.initialized &&
       this.ttsReadestVoices.some((voice) => voice.id === voiceId && !voice.disabled);
+    // Fork-local Baidu engine: chosen only by one of its own voices, never by an
+    // empty voice id (that is the "default engine" path).
+    const useBaiduTTS =
+      voiceId !== '' &&
+      this.ttsBaiduClient.initialized &&
+      this.ttsBaiduVoices.some((voice) => voice.id === voiceId && !voice.disabled);
     const useEdgeTTS = !!this.ttsEdgeVoices.find(
       (voice) => (voiceId === '' || voice.id === voiceId) && !voice.disabled,
     );
@@ -2431,6 +2470,9 @@ export class TTSController extends EventTarget {
       await this.ttsClient.setRate(this.ttsRate);
     } else if (useReadestTTS) {
       this.ttsClient = this.ttsReadestClient;
+      await this.ttsClient.setRate(this.ttsRate);
+    } else if (useBaiduTTS) {
+      this.ttsClient = this.ttsBaiduClient;
       await this.ttsClient.setRate(this.ttsRate);
     } else if (useEdgeTTS) {
       this.ttsClient = this.ttsEdgeClient;
@@ -2811,6 +2853,9 @@ export class TTSController extends EventTarget {
     }
     if (this.ttsCustomClient.initialized) {
       await this.ttsCustomClient.shutdown();
+    }
+    if (this.ttsBaiduClient.initialized) {
+      await this.ttsBaiduClient.shutdown();
     }
     if (this.ttsNativeClient?.initialized) {
       await this.ttsNativeClient.shutdown();

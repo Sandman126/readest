@@ -70,7 +70,10 @@ export const isCloudSyncInPlan = (plan: UserPlan, customizationPurchased: boolea
  * Every gate goes through {@link isCloudSyncAllowed}, so this flag is the
  * whole toggle.
  */
-export const CLOUD_SYNC_REQUIRES_PREMIUM = true;
+// Fork-local change: OFF, so third-party cloud sync (WebDAV / Google Drive /
+// S3 / OneDrive) is available on every plan. Upstream ships this ON; the
+// expected value is asserted in cloudSync.test.ts.
+export const CLOUD_SYNC_REQUIRES_PREMIUM = false;
 
 /**
  * Whether third-party cloud sync is available for a plan. Falls back to the
@@ -203,16 +206,19 @@ export const isCustomizationAllowed = (plan: UserPlan, customizationPurchased: b
  * premium feature. Requests go straight from the device, so this is a
  * client-side gate, like the TTS cache. It reads the session token directly so
  * a reader window never sees a premium user as free while the plan loads.
+ *
+ * Fork-local change: ungated. The translator popup, the language panel, custom
+ * dictionaries and the runtime request path all read this one function, so this
+ * is the whole toggle. Asserted in customization-access.test.ts and
+ * LangPanel.test.tsx.
  */
-export const isCustomTranslatorAllowed = (token: string | null | undefined): boolean =>
-  token
-    ? isCustomizationAllowed(getUserProfilePlan(token), getCustomizationPurchased(token))
-    : isSelfHosted();
+export const isCustomTranslatorAllowed = (_token: string | null | undefined): boolean => true;
 
 /**
  * Custom TTS services (the user's own OpenAI-compatible speech endpoint) are
  * premium on the same terms as custom translators: requests go straight from
- * the device, so this is a client-side gate.
+ * the device, so this is a client-side gate. Both are ungated on this fork, so
+ * it stays the alias upstream defines. Asserted in TTSPanel.test.tsx.
  */
 export const isCustomTTSAllowed = isCustomTranslatorAllowed;
 

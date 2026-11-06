@@ -114,6 +114,15 @@ vi.mock('@/services/tts/BufferedTTSClient', () => ({
       h.customArgs = args;
       return;
     }
+    if ((args[0] as { id: string }).id === 'baidu-tts') {
+      // Fork-local Baidu engine. Inert here so it neither joins the client list
+      // nor contributes a voice group to the expectations below.
+      Object.assign(this, mockClient('baidu-tts'), bufferedExtras());
+      (this['init'] as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+      (this['getAllVoices'] as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      (this['getVoices'] as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+      return;
+    }
     h.bufferedArgs.push(args);
     Object.assign(this, mockClient('readest-tts'), bufferedExtras());
     (this['init'] as ReturnType<typeof vi.fn>).mockImplementation(async function (this: {

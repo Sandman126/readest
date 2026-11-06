@@ -101,6 +101,17 @@ vi.mock('@/services/tts/NativeTTSClient', () => ({
     Object.assign(this, makeMockTTSClient('native'));
   }),
 }));
+// The fork-local Baidu engine is constructed unconditionally too; stubbed inert
+// so it stays out of the voice groups this lane asserts on.
+vi.mock('@/services/tts/providers/baidu', () => ({
+  BaiduSpeechProvider: vi.fn().mockImplementation(function (this: Record<string, unknown>) {
+    Object.assign(this, {
+      id: 'baidu-tts',
+      init: vi.fn().mockResolvedValue(false),
+      getAllVoices: vi.fn().mockResolvedValue([]),
+    });
+  }),
+}));
 
 // useEnv/useAuth throw outside their providers; stub them (test-side module
 // mocks, not a production seam). A null appService exercises the web/desktop
